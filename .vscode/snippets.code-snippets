@@ -1,0 +1,13 @@
+{
+  "ns-template": {
+    "scope": "typescript",
+    "prefix": "nstemp",
+    "body": [
+      "import { NS } from '@ns';",
+      "",
+      "export const main = async (ns : NS) : Promise<void> => {",
+      "\t//",
+      "};"
+    ]
+  }
+}
