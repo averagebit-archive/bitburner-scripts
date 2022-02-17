@@ -9,9 +9,8 @@ const log = (...args): void => logUtil(_ns, ...args);
 
 enum JobType {
   hack = "hack",
-  growAfterHack = "growAfterHack",
-  weakAfterHack = "weakAfterHack",
-  weakAfterGrow = "weakAfterGrow",
+  grow = "grow",
+  weak = "weak",
 }
 
 interface Process {
@@ -30,19 +29,19 @@ interface Job {
   readonly target: Server;
   readonly type: JobType;
   host: Server;
-  link: Job | boolean;
+  links: Job[];
   times: JobTimes;
   pid: number;
   uid: string;
 }
 
 class Job implements Job {
-  constructor(tool, threads, target, type, link) {
+  constructor(tool, threads, target, type) {
     this.type = type;
     this.tool = tool;
     this.target = target;
     this.threads = threads;
-    this.link = link || false;
+    this.links = [];
     this.times = {
       duration: 0,
       end: 0,
@@ -58,13 +57,10 @@ class Job implements Job {
     if (this.type === JobType.hack)
       this.times.duration = this.target.times.hack;
 
-    if (this.type === JobType.growAfterHack)
+    if (this.type === JobType.grow)
       this.times.duration = this.target.times.grow;
 
-    if (this.type === JobType.weakAfterHack)
-      this.times.duration = this.target.times.weak;
-
-    if (this.type === JobType.weakAfterGrow)
+    if (this.type === JobType.weak)
       this.times.duration = this.target.times.weak;
 
     this.times.end = now + this.times.duration;
@@ -80,7 +76,7 @@ class Job implements Job {
       this.threads,
       this.target,
       "--uid",
-      this.type
+      `${this.type}-${this.times.end}`
       // "--delay",
       // this.times.duration,
       // "--debug"
@@ -96,6 +92,17 @@ class Job implements Job {
     );
 
     return this;
+  }
+
+  /** Returns true if the provided job type exists in one of the linked jobs of the instance. */
+  public hasLinkType(type: JobType): boolean {
+    let hasLinkType = false;
+
+    for (const job of this.links) {
+      if (job.type === type) hasLinkType = true;
+    }
+
+    return hasLinkType;
   }
 
   /** Returns the job object if the process is still alive. */
@@ -190,69 +197,83 @@ export const main = async (ns: NS): Promise<void> => {
   const queue = [];
 
   while (true) {
+    const now = Date.now();
+    await uploadTools(ns);
+
     for (const [index, job] of queue.entries()) {
-      const now = Date.now();
-      if (now >= job.times.end) queue.splice(index, 1);
+      if (now >= job.times.end && !job.isRunning(ns)) queue.splice(index, 1);
     }
 
     target.updateMetrics(ns);
-    await uploadTools(ns);
-
-    const weakAfterGrow = new Job(
-      tools.weak,
-      target.threads.weakAfterGrow,
-      target,
-      JobType.weakAfterGrow
-    );
-
-    const weakAfterHack = new Job(
-      tools.weak,
-      target.threads.weakAfterHack,
-      target,
-      JobType.weakAfterHack
-    );
-
-    const growAfterHack = new Job(
-      tools.grow,
-      target.threads.growAfterHack,
-      target,
-      JobType.growAfterHack
-    );
 
     const hack = new Job(tools.hack, target.threads.hack, target, JobType.hack);
 
+    const grow = new Job(
+      tools.grow,
+      target.threads.growAfterHack,
+      target,
+      JobType.grow
+    );
+
+    const weak = new Job(
+      tools.weak,
+      target.threads.weakAfterGrow + target.threads.weakAfterHack,
+      target,
+      JobType.weak
+    );
+
     // TODO: Handle switching target, multiple targets and share/exp grind with remaining threads
-    // TODO: Handle multiple cycles and reduce job offsets
+    // TODO: Reduce job offsets
     if (queue.length === 0) {
-      weakAfterGrow.execute(ns);
-      queue.push(weakAfterGrow);
+      weak.execute(ns);
+      queue.push(weak);
     }
 
-    for (const job of queue) {
-      if (queue.length === 1 && job.type === JobType.weakAfterGrow) {
-        if (weakAfterHack.times.end >= job.times.end + 2000) {
-          weakAfterHack.execute(ns);
-          queue.push(weakAfterHack);
-        }
-      }
+    const maxCycles = 10;
+    const cyclesQueued = queue.filter(
+      (job) => job.type === JobType.weak
+    ).length;
 
-      if (!job.link) {
-        if (job.type === JobType.weakAfterGrow) {
-          if (growAfterHack.times.end >= job.times.end - 1000) {
-            growAfterHack.execute(ns);
-            job.link = growAfterHack;
-            growAfterHack.link = weakAfterGrow;
-            queue.push(growAfterHack);
+    if (target.hasMinSecurity) {
+      for (const job of queue) {
+        if (job.type === JobType.weak) {
+          if (
+            cyclesQueued < maxCycles &&
+            !job.hasLinkType(JobType.weak) &&
+            weak.times.end >= job.times.end + 5000
+          ) {
+            weak.execute(ns);
+            job.links.push(weak);
+            queue.push(weak);
           }
-        }
 
-        if (job.type === JobType.weakAfterHack) {
-          if (hack.times.end >= job.times.end - 1000) {
+          if (
+            !job.hasLinkType(JobType.grow) &&
+            grow.times.end >= job.times.end - 1000 &&
+            grow.times.end < job.times.end
+          ) {
+            grow.execute(ns);
+            job.links.push(grow);
+            queue.push(grow);
+          }
+
+          if (
+            !job.hasLinkType(JobType.hack) &&
+            hack.times.end >= job.times.end - 2000 &&
+            hack.times.end <= job.times.end - 1000
+          ) {
             hack.execute(ns);
-            job.link = hack;
-            hack.link = weakAfterHack;
+            job.links.push(hack);
             queue.push(hack);
           }
+        }
+
+        if (
+          job.type === JobType.hack &&
+          job.times.end >= now - 500 &&
+          !target.hasMaxMoney
+        ) {
+          job.kill(ns);
         }
       }
     }
