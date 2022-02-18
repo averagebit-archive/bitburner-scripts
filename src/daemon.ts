@@ -240,7 +240,7 @@ export const main = async (ns: NS): Promise<void> => {
           if (
             cyclesQueued < maxCycles &&
             !job.hasLinkType(JobType.weak) &&
-            weak.times.end >= job.times.end + 5000
+            weak.times.end >= job.times.end + 300
           ) {
             weak.execute(ns);
             job.links.push(weak);
@@ -249,7 +249,7 @@ export const main = async (ns: NS): Promise<void> => {
 
           if (
             !job.hasLinkType(JobType.grow) &&
-            grow.times.end >= job.times.end - 1000 &&
+            grow.times.end >= job.times.end - 100 &&
             grow.times.end < job.times.end
           ) {
             grow.execute(ns);
@@ -259,8 +259,8 @@ export const main = async (ns: NS): Promise<void> => {
 
           if (
             !job.hasLinkType(JobType.hack) &&
-            hack.times.end >= job.times.end - 2000 &&
-            hack.times.end <= job.times.end - 1000
+            hack.times.end >= job.times.end - 200 &&
+            hack.times.end <= job.times.end - 100
           ) {
             hack.execute(ns);
             job.links.push(hack);
@@ -270,7 +270,7 @@ export const main = async (ns: NS): Promise<void> => {
 
         if (
           job.type === JobType.hack &&
-          job.times.end >= now - 500 &&
+          job.times.end >= now - 300 &&
           !target.hasMaxMoney
         ) {
           job.kill(ns);
