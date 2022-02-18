@@ -1,14 +1,5 @@
 import { NS } from "@ns";
-
-export interface Tool {
-  name: string;
-  path: string;
-  cost: number;
-}
-
-export interface Toolkit {
-  [name: string]: Tool;
-}
+import { Tool, Toolkit } from "/definitions";
 
 export class Tool {
   constructor(ns: NS, path: string) {
